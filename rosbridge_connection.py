@@ -147,13 +147,52 @@ class rosbridge_interface(object):
             while True:
                 received_msg = yield self.conn.read_message()
                 if received_msg is None: break
-                self.exit_code = self._callback(received_msg)
+                self.exit_code = self._callback(json.loads(received_msg))
                 if self.exit_code: break
                 yield gen.sleep(period)
 
             self.conn.close()
 
         self.run_function = process_msgs
+
+
+    def read_and_actuate(self, url, id, period, topic_publ, topic_subs, msg_type, throttle_rate=0, queue_length=1, fragment_size=0, compression="none"):
+        '''
+
+        '''
+        @gen.coroutine
+        def process_msgs():
+            self.sender = yield websocket_connect(url)
+            self.reader = yield websocket_connect(url)
+
+            cmd_reader = {'op':'subscribe', 'id':id+"subscriber", 'topic':topic_subs, 'type':msg_type, \
+                          'throttle_rate':throttle_rate, 'queue_length':queue_length, \
+                          'compression':compression}
+
+            yield self.reader.write_message(json.dumps(cmd_reader)) #subscribes to the topic
+
+
+            while True:
+                # Reads the joint_states from the robot
+                self.joint_states = yield self.reader.read_message()
+                if self.joint_states is None: break
+
+                # Sends the joint_states to the LSM and receives the next joint values
+                self.next_joint_states = self._callback(json.loads(self.joint_states)) #interfaces to the LSM
+                if self.next_joint_states is None: break
+
+                # Sends the new_joint_states to the robot
+                yield self.sender.write_message(json.dumps({'op':'publish', 'id':id+"publisher", 'topic':topic_publ, 'msg':self.next_joint_states}))
+
+                # Sleeps if necessary...
+                yield gen.sleep(period)
+
+            self.sender.close()
+            self.reader.close()
+
+        self.run_function = process_msgs
+
+
 
     def run(self):
         '''
@@ -168,26 +207,55 @@ class rosbridge_interface(object):
         io_loop.clear_instance()
         IOLoop.instance().run_sync(self.run_function) #runs until run_function finishes
 
+
 if __name__ == "__main__":
 
     #
     # Some examples
     #
+
+    my_url = "ws://localhost:9090"
+
+    # Creates the lists as memory buffers for the callback funtion
+    labels = [None]
+    effort = [None]
+    position = [None]
+    velocity = [None]
+
     def example_callback_subscriber(received_msg):
-        print received_msg
-        return 0
+        labels[0]=received_msg['msg']['name']
+        effort[0]=dict(zip(labels[0],received_msg['msg']['effort']))
+        position[0]=dict(zip(labels[0],received_msg['msg']['position']))
+        velocity[0]=dict(zip(labels[0],received_msg['msg']['velocity']))
+        return 1 # forces it to stop after the first read
 
     def example_callback_publisher():
-        return {'mode': 1, 'command': [0.0, 0.0, 0.0, 0.0, 2.55, -1.0, -1.07], 'names': ['left_w0', 'left_w1', 'left_w2', 'left_e0', 'left_e1', 'left_s0', 'left_s1']}
+        return {'mode': 1, 'command': [0.0, 0.0, 0.0, 0.0, 2.55, -1.0, -1.07], \
+                'names': ['left_w0', 'left_w1', 'left_w2', 'left_e0', 'left_e1', 'left_s0', 'left_s1']}
 
     def example_callback_topics(received_msg):
         print received_msg
         return 0
 
+    def example_callback_read_and_actuate(received_msg):
+        labels=received_msg['msg']['name']
+        position=dict(zip(labels,received_msg['msg']['position']))
+
+        return {'mode': 1, 'command': [position[li]+0.1 for li in ['left_w0', 'left_w1', 'left_w2', 'left_e0', 'left_e1', 'left_s0', 'left_s1']], \
+                'names': ['left_w0', 'left_w1', 'left_w2', 'left_e0', 'left_e1', 'left_s0', 'left_s1']}
+
     subscriber = rosbridge_interface(example_callback_subscriber)
     publisher = rosbridge_interface(example_callback_publisher)
     topics = rosbridge_interface(example_callback_topics)
 
-    publisher.publish("ws://localhost:9090","my_joint_commands","/robot/limb/left/joint_command", 1)
-    subscriber.subscribe("ws://localhost:9090","joint_states","/robot/joint_states","sensor_msgs/JointState", period=0.1)
-    topics.list_topics("ws://localhost:9090")
+    closed_loop = rosbridge_interface(example_callback_read_and_actuate)
+
+    publisher.publish(my_url,"my_joint_commands", "/robot/limb/left/joint_command", 1)
+
+    subscriber.subscribe(my_url,"joint_states", "/robot/joint_states","sensor_msgs/JointState", period=0.1)
+
+    topics.list_topics(my_url)
+
+    closed_loop.read_and_actuate(my_url, "closed_loop", 0.1, \
+                                 "/robot/limb/left/joint_command", "/robot/joint_states", \
+                                 "sensor_msgs/JointState", throttle_rate=0, queue_length=1, fragment_size=0, compression="none")
