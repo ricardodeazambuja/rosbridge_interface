@@ -1,4 +1,4 @@
-# rosbridge_interface
+# Rosbridge websocket interfacing without a browser
 Python interface to Rosbridge using Websockets  
 
 To start the rosbridge/rosapi:  
