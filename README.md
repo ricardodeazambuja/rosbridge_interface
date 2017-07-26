@@ -9,6 +9,8 @@ Information about Rosbridge protocol:
 https://github.com/RobotWebTools/rosbridge_suite/blob/groovy-devel/ROSBRIDGE_PROTOCOL.md  
 
 To understand the msgs:  
-http://wiki.ros.org/ROS/YAMLCommandLine
+http://wiki.ros.org/ROS/YAMLCommandLine  
 
+
+http://ricardodeazambuja.com/
 
